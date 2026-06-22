@@ -67,11 +67,8 @@
         .desktop {
             height: calc(100% - 30px);
             padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            align-items: center;
+            overflow: hidden;
+            position: relative;
         }
 
         /* Windows 95 Style Window */
@@ -84,6 +81,13 @@
             width: 100%;
             max-width: 800px;
             margin-bottom: 20px;
+            position: absolute;
+            top: 20px;
+            left: 20px;
+        }
+
+        .window.dragging {
+            user-select: none;
         }
 
         .title-bar {
@@ -92,6 +96,11 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+
+        .desktop.draggable-enabled .title-bar {
+            cursor: move;
+            user-select: none;
         }
 
         .title-bar-text {
@@ -406,7 +415,17 @@
 
         @media (max-width: 600px) {
             .music-grid { grid-template-columns: repeat(2, 1fr); }
-            .window { width: 95vw; }
+            .desktop {
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                gap: 20px;
+                align-items: center;
+            }
+            .window {
+                position: static;
+                width: 95vw;
+            }
         }
     </style>
 </head>
@@ -669,6 +688,7 @@
                 if (!success) return;
 
                 document.getElementById("discord-widget-win").style.display = "block";
+                initDraggableWindows();
                 document.getElementById("discord-avatar-img").src = `https://cdn.discordapp.com/avatars/${data.discord_user.id}/${data.discord_user.avatar}.png?size=80`;
                 document.getElementById("discord-username").textContent = data.discord_user.username;
                 
@@ -722,13 +742,101 @@
             closeStartMenu();
         }
 
+        let zCounter = 10;
+        function bringToFront(winEl) {
+            zCounter++;
+            winEl.style.zIndex = zCounter;
+        }
+
+        function isDragEnabled() {
+            return window.matchMedia("(min-width: 601px)").matches;
+        }
+
+        function makeDraggable(winEl) {
+            const titleBar = winEl.querySelector('.title-bar');
+            if (!titleBar || titleBar.dataset.dragBound === "true") return;
+            titleBar.dataset.dragBound = "true";
+
+            let offsetX = 0, offsetY = 0, dragging = false;
+
+            const startDrag = (clientX, clientY) => {
+                if (!isDragEnabled()) return false;
+                bringToFront(winEl);
+                const rect = winEl.getBoundingClientRect();
+                const parentRect = winEl.parentElement.getBoundingClientRect();
+                offsetX = clientX - rect.left;
+                offsetY = clientY - rect.top;
+                winEl.style.left = (rect.left - parentRect.left) + 'px';
+                winEl.style.top = (rect.top - parentRect.top) + 'px';
+                winEl.classList.add('dragging');
+                dragging = true;
+                return true;
+            };
+
+            const moveDrag = (clientX, clientY) => {
+                if (!dragging) return;
+                const parentRect = winEl.parentElement.getBoundingClientRect();
+                let x = clientX - parentRect.left - offsetX;
+                let y = clientY - parentRect.top - offsetY;
+                x = Math.max(0, Math.min(x, parentRect.width - winEl.offsetWidth));
+                y = Math.max(0, Math.min(y, parentRect.height - winEl.offsetHeight));
+                winEl.style.left = x + 'px';
+                winEl.style.top = y + 'px';
+            };
+
+            const endDrag = () => {
+                dragging = false;
+                winEl.classList.remove('dragging');
+            };
+
+            titleBar.addEventListener('mousedown', (e) => {
+                if (e.target.closest('.title-bar-controls')) return;
+                if (startDrag(e.clientX, e.clientY)) e.preventDefault();
+            });
+            document.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+            document.addEventListener('mouseup', endDrag);
+
+            titleBar.addEventListener('touchstart', (e) => {
+                if (e.target.closest('.title-bar-controls')) return;
+                const t = e.touches[0];
+                startDrag(t.clientX, t.clientY);
+            }, { passive: true });
+            document.addEventListener('touchmove', (e) => {
+                if (!dragging) return;
+                const t = e.touches[0];
+                moveDrag(t.clientX, t.clientY);
+            }, { passive: true });
+            document.addEventListener('touchend', endDrag);
+
+            winEl.addEventListener('mousedown', () => { if (isDragEnabled()) bringToFront(winEl); });
+        }
+
+        function initDraggableWindows() {
+            const desktop = document.querySelector('.desktop');
+            if (!desktop) return;
+            desktop.classList.toggle('draggable-enabled', isDragEnabled());
+
+            const windows = Array.from(document.querySelectorAll('.window'));
+            windows.forEach((winEl, i) => {
+                if (winEl.dataset.posInit !== "true") {
+                    winEl.style.left = (40 + i * 40) + 'px';
+                    winEl.style.top = (20 + i * 40) + 'px';
+                    winEl.style.zIndex = String(10 + i);
+                    winEl.dataset.posInit = "true";
+                }
+                makeDraggable(winEl);
+            });
+        }
+
         window.addEventListener("DOMContentLoaded", () => {
             const saved = localStorage.getItem("preferredLang");
             setLanguage(saved || (navigator.language.startsWith("cs") ? "cs" : "en"));
             initClock();
             updateAlbums();
+            initDraggableWindows();
             updateDiscord();
             setInterval(updateDiscord, 10000);
+            window.addEventListener("resize", initDraggableWindows);
 
             // Remove any stray direct text nodes inside the system tray (keeps element children like #clock)
             const sysTray = document.querySelector('.system-tray');
